@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.service.notification.StatusBarNotification;
 
+import java.io.File;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -12,8 +13,8 @@ import de.robv.android.xposed.XposedBridge;
 
 public class MySettings {
 
-    private static final String PREF_NAME = "notif_hider_prefs";
-    private static final String KEY_BLOCKED = "blocked_packages";
+    static final String PREF_NAME = "notif_hider_prefs";
+    static final String KEY_BLOCKED = "blocked_packages";
 
     private static Context appContext;
 
@@ -21,15 +22,21 @@ public class MySettings {
         appContext = ctx.getApplicationContext();
     }
 
-    @SuppressWarnings("deprecation")
     private static SharedPreferences getPrefs() {
-        // MODE_WORLD_READABLE нужен, чтобы XSharedPreferences мог читать из процесса SystemUI.
-        // На Android 7+ может бросить SecurityException — перехватываем и откатываемся к PRIVATE.
+        return appContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+    }
+
+    // После каждого сохранения делаем файл world-readable,
+    // чтобы XSharedPreferences мог его прочитать из SystemUI
+    private static void makePrefsReadable() {
         try {
-            return appContext.getSharedPreferences(PREF_NAME, Context.MODE_WORLD_READABLE);
-        } catch (SecurityException e) {
-            return appContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
-        }
+            File dir = new File(appContext.getFilesDir().getParent(), "shared_prefs");
+            File file = new File(dir, PREF_NAME + ".xml");
+            if (file.exists()) {
+                file.setReadable(true, false);  // readable by all users
+                dir.setExecutable(true, false); // allow traversal
+            }
+        } catch (Throwable ignored) {}
     }
 
     public static boolean isBlocked(StatusBarNotification sbn) {
@@ -46,19 +53,24 @@ public class MySettings {
             current.remove(sbn.getPackageName());
         }
         prefs.edit().putStringSet(KEY_BLOCKED, current).apply();
+        makePrefsReadable();
     }
 
-    // Вызывается из хука — читает настройки из файла напрямую (другой процесс)
+    // Вызывается из хука в процессе SystemUI
     public static Set<String> getBlockedNotifications() {
         try {
             XSharedPreferences prefs = new XSharedPreferences("com.example.notifhider", PREF_NAME);
             prefs.makeWorldReadable();
             prefs.reload();
+            if (!prefs.getFile().canRead()) {
+                XposedBridge.log("NotifIconHider: файл настроек недоступен: " + prefs.getFile().getAbsolutePath());
+                return new HashSet<>();
+            }
             Set<String> result = prefs.getStringSet(KEY_BLOCKED, new HashSet<>());
-            XposedBridge.log("NotifIconHider: заблокированные пакеты: " + result);
+            XposedBridge.log("NotifIconHider: заблокированных пакетов: " + result.size() + " -> " + result);
             return result;
         } catch (Throwable t) {
-            XposedBridge.log("NotifIconHider: ошибка чтения настроек: " + t);
+            XposedBridge.log("NotifIconHider: ошибка XSharedPreferences: " + t);
             return new HashSet<>();
         }
     }
