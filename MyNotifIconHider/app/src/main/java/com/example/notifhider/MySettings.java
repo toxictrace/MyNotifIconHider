@@ -1,6 +1,5 @@
 package com.example.notifhider;
 
-import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.service.notification.StatusBarNotification;
@@ -9,6 +8,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 import de.robv.android.xposed.XSharedPreferences;
+import de.robv.android.xposed.XposedBridge;
 
 public class MySettings {
 
@@ -17,21 +17,28 @@ public class MySettings {
 
     private static Context appContext;
 
-    // Инициализировать из MainActivity
     public static void init(Context ctx) {
         appContext = ctx.getApplicationContext();
     }
 
-    // Используется в MainActivity
+    @SuppressWarnings("deprecation")
+    private static SharedPreferences getPrefs() {
+        // MODE_WORLD_READABLE нужен, чтобы XSharedPreferences мог читать из процесса SystemUI.
+        // На Android 7+ может бросить SecurityException — перехватываем и откатываемся к PRIVATE.
+        try {
+            return appContext.getSharedPreferences(PREF_NAME, Context.MODE_WORLD_READABLE);
+        } catch (SecurityException e) {
+            return appContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        }
+    }
+
     public static boolean isBlocked(StatusBarNotification sbn) {
-        SharedPreferences prefs = appContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
-        Set<String> blocked = prefs.getStringSet(KEY_BLOCKED, new HashSet<>());
+        Set<String> blocked = getPrefs().getStringSet(KEY_BLOCKED, new HashSet<>());
         return blocked.contains(sbn.getPackageName());
     }
 
-    // Используется в MainActivity
     public static void setBlocked(StatusBarNotification sbn, boolean blocked) {
-        SharedPreferences prefs = appContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        SharedPreferences prefs = getPrefs();
         Set<String> current = new HashSet<>(prefs.getStringSet(KEY_BLOCKED, new HashSet<>()));
         if (blocked) {
             current.add(sbn.getPackageName());
@@ -41,10 +48,18 @@ public class MySettings {
         prefs.edit().putStringSet(KEY_BLOCKED, current).apply();
     }
 
-    // Используется в HookInit (читает файл настроек напрямую из другого процесса)
+    // Вызывается из хука — читает настройки из файла напрямую (другой процесс)
     public static Set<String> getBlockedNotifications() {
-        XSharedPreferences prefs = new XSharedPreferences("com.example.notifhider", PREF_NAME);
-        prefs.reload();
-        return prefs.getStringSet(KEY_BLOCKED, new HashSet<>());
+        try {
+            XSharedPreferences prefs = new XSharedPreferences("com.example.notifhider", PREF_NAME);
+            prefs.makeWorldReadable();
+            prefs.reload();
+            Set<String> result = prefs.getStringSet(KEY_BLOCKED, new HashSet<>());
+            XposedBridge.log("NotifIconHider: заблокированные пакеты: " + result);
+            return result;
+        } catch (Throwable t) {
+            XposedBridge.log("NotifIconHider: ошибка чтения настроек: " + t);
+            return new HashSet<>();
+        }
     }
 }
