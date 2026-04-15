@@ -33,7 +33,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void updateNotificationList() {
         container.removeAllViews();
-        List<StatusBarNotification> activeNotifications = NotificationService.getActiveNotifications();
+        List<StatusBarNotification> activeNotifications = NotificationService.fetchAll();
 
         for (StatusBarNotification sbn : activeNotifications) {
             LinearLayout row = new LinearLayout(this);
@@ -67,7 +67,7 @@ public class MainActivity extends AppCompatActivity {
             instance = this;
         }
 
-        public static List<StatusBarNotification> getActiveNotifications() {
+        public static List<StatusBarNotification> fetchAll() {
             List<StatusBarNotification> list = new ArrayList<>();
             if (instance != null) {
                 StatusBarNotification[] active = instance.getActiveNotifications();
