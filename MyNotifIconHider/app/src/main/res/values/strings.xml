@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NotifIconHider</string>
+    <string name="toolbar_title">Скрыть иконки</string>
+    <string name="no_access_title">Нет доступа к уведомлениям</string>
+    <string name="no_access_desc">Разрешите приложению читать уведомления, чтобы увидеть активные иконки</string>
+    <string name="grant_access">Открыть настройки</string>
+    <string name="no_notifications">Активных уведомлений нет</string>
+    <string name="no_notifications_desc">Когда появятся уведомления — они отобразятся здесь</string>
+    <string name="refresh">Обновить</string>
+    <string name="hidden">Скрыто</string>
+    <string name="visible">Видимо</string>
+</resources>
