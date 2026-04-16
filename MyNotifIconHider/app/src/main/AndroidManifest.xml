@@ -6,7 +6,7 @@
     <application
         android:label="NotifIconHider"
         android:icon="@drawable/ic_launcher"
-        android:theme="@style/Theme.AppCompat.Light"
+        android:theme="@style/Theme.NotifHider"
         android:allowBackup="false">
 
         <activity
@@ -19,7 +19,7 @@
         </activity>
 
         <service
-            android:name=".MainActivity$NotificationService"
+            android:name=".NotificationService"
             android:label="NotifIconHider"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
             android:exported="true">
