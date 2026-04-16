@@ -16,7 +16,6 @@ public class HookInit implements IXposedHookLoadPackage {
 
     private static final int TAG_PKG = "notifhider_pkg".hashCode();
 
-    // Кэш заблокированных пакетов — читаем из XSharedPreferences только раз в 3 секунды
     private static volatile Set<String> blockedCache = Collections.emptySet();
     private static volatile long lastRead = 0;
 
@@ -45,8 +44,9 @@ public class HookInit implements IXposedHookLoadPackage {
             return;
         }
 
-        // === Хук 1: set(icon) — BEFORE ===
-        // Если пакет заблокирован — сразу скрываем view и не даём иконке установиться
+        final Class<?> finalIconViewClass = iconViewClass;
+
+        // === Хук 1: set(StatusBarIcon) ===
         boolean hookedSet = false;
         for (Method m : iconViewClass.getDeclaredMethods()) {
             if (m.getName().equals("set") && m.getParameterCount() == 1
@@ -60,21 +60,12 @@ public class HookInit implements IXposedHookLoadPackage {
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         Object icon = param.args[0];
                         if (icon == null) return;
-
                         String pkg = getPkg(icon);
                         View view = (View) param.thisObject;
-
-                        // Всегда сохраняем пакет в тег — нужно для setVisibility-хука
-                        if (pkg != null) {
-                            view.setTag(TAG_PKG, pkg);
-                        }
-
+                        if (pkg != null) view.setTag(TAG_PKG, pkg);
                         if (pkg != null && getBlocked().contains(pkg)) {
-                            XposedBridge.log("NotifIconHider: блокируем set() для " + pkg);
-                            // Скрываем сразу — до того как SystemUI покажет иконку
+                            XposedBridge.log("NotifIconHider: скрываем (before) " + pkg);
                             view.setVisibility(View.GONE);
-                            // Не отменяем set() совсем, чтобы не было краша,
-                            // но сразу же скрываем view
                         }
                     }
 
@@ -82,19 +73,16 @@ public class HookInit implements IXposedHookLoadPackage {
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                         Object icon = param.args[0];
                         if (icon == null) return;
-
                         String pkg = getPkg(icon);
                         if (pkg == null) return;
-
                         View view = (View) param.thisObject;
                         view.setTag(TAG_PKG, pkg);
-
                         if (getBlocked().contains(pkg)) {
+                            XposedBridge.log("NotifIconHider: скрываем (after) " + pkg);
                             view.setVisibility(View.GONE);
                         }
                     }
                 });
-
                 hookedSet = true;
             }
         }
@@ -104,53 +92,67 @@ public class HookInit implements IXposedHookLoadPackage {
             return;
         }
 
-        // === Хук 2: setVisibility — BEFORE ===
-        // Блокируем любую попытку сделать иконку видимой, если пакет заблокирован
-        try {
-            XposedHelpers.findAndHookMethod(iconViewClass, "setVisibility", int.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                            int vis = (int) param.args[0];
-                            if (vis != View.VISIBLE) return; // разрешаем скрывать
-
-                            View view = (View) param.thisObject;
-                            String pkg = (String) view.getTag(TAG_PKG);
-                            if (pkg == null) return;
-
-                            if (getBlocked().contains(pkg)) {
-                                XposedBridge.log("NotifIconHider: блокируем setVisibility(VISIBLE) для " + pkg);
-                                param.setResult(null);
-                            }
-                        }
-                    });
-            XposedBridge.log("NotifIconHider: хук setVisibility установлен");
-        } catch (Throwable e) {
-            XposedBridge.log("NotifIconHider: ошибка setVisibility: " + e);
+        // === Хук 2: setVisibility — ищем в иерархии родителей ===
+        // На MIUI StatusBarIconView не переопределяет setVisibility — оно в View
+        Method setVisMeth = findInHierarchy(iconViewClass, "setVisibility", int.class);
+        if (setVisMeth != null) {
+            XposedBridge.log("NotifIconHider: setVisibility найден в " + setVisMeth.getDeclaringClass().getName());
+            setVisMeth.setAccessible(true);
+            XposedBridge.hookMethod(setVisMeth, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    // Фильтруем — нас интересуют только StatusBarIconView
+                    if (!finalIconViewClass.isInstance(param.thisObject)) return;
+                    int vis = (int) param.args[0];
+                    if (vis != View.VISIBLE) return;
+                    View view = (View) param.thisObject;
+                    String pkg = (String) view.getTag(TAG_PKG);
+                    if (pkg == null) return;
+                    if (getBlocked().contains(pkg)) {
+                        XposedBridge.log("NotifIconHider: блок setVisibility(VISIBLE) -> " + pkg);
+                        param.setResult(null);
+                    }
+                }
+            });
+        } else {
+            XposedBridge.log("NotifIconHider: setVisibility не найден в иерархии");
         }
 
-        // === Хук 3: onAttachedToWindow ===
-        // Когда view заново прикрепляется к иерархии (MIUI пересоздаёт views) — скрываем
-        try {
-            XposedHelpers.findAndHookMethod(iconViewClass, "onAttachedToWindow",
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                            View view = (View) param.thisObject;
-                            String pkg = (String) view.getTag(TAG_PKG);
-                            if (pkg == null) return;
-
-                            if (getBlocked().contains(pkg)) {
-                                view.setVisibility(View.GONE);
-                            }
-                        }
-                    });
-            XposedBridge.log("NotifIconHider: хук onAttachedToWindow установлен");
-        } catch (Throwable e) {
-            XposedBridge.log("NotifIconHider: ошибка onAttachedToWindow: " + e);
+        // === Хук 3: onAttachedToWindow — ищем в иерархии родителей ===
+        Method attachMeth = findInHierarchy(iconViewClass, "onAttachedToWindow");
+        if (attachMeth != null) {
+            XposedBridge.log("NotifIconHider: onAttachedToWindow найден в " + attachMeth.getDeclaringClass().getName());
+            attachMeth.setAccessible(true);
+            XposedBridge.hookMethod(attachMeth, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (!finalIconViewClass.isInstance(param.thisObject)) return;
+                    View view = (View) param.thisObject;
+                    String pkg = (String) view.getTag(TAG_PKG);
+                    if (pkg == null) return;
+                    if (getBlocked().contains(pkg)) {
+                        view.setVisibility(View.GONE);
+                    }
+                }
+            });
+        } else {
+            XposedBridge.log("NotifIconHider: onAttachedToWindow не найден в иерархии");
         }
 
         XposedBridge.log("NotifIconHider: все хуки установлены");
+    }
+
+    // Ищет метод в классе и всех его родителях
+    private static Method findInHierarchy(Class<?> cls, String name, Class<?>... params) {
+        Class<?> c = cls;
+        while (c != null) {
+            try {
+                return c.getDeclaredMethod(name, params);
+            } catch (NoSuchMethodException ignored) {
+                c = c.getSuperclass();
+            }
+        }
+        return null;
     }
 
     private static String getPkg(Object icon) {
