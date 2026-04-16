@@ -17,16 +17,22 @@ public class NotificationService extends NotificationListenerService {
     }
 
     @Override
-    public void onDestroy() {
-        super.onDestroy();
+    public void onListenerConnected() {
+        super.onListenerConnected();
+        instance = this;
+    }
+
+    @Override
+    public void onListenerDisconnected() {
+        super.onListenerDisconnected();
         instance = null;
     }
 
     @Override
-    public void onNotificationPosted(StatusBarNotification sbn) {}
-
-    @Override
-    public void onNotificationRemoved(StatusBarNotification sbn) {}
+    public void onDestroy() {
+        super.onDestroy();
+        instance = null;
+    }
 
     public static List<StatusBarNotification> fetchAll() {
         List<StatusBarNotification> list = new ArrayList<>();
@@ -43,7 +49,7 @@ public class NotificationService extends NotificationListenerService {
         return list;
     }
 
-    public static boolean isAvailable() {
+    public static boolean isConnected() {
         return instance != null;
     }
 }
