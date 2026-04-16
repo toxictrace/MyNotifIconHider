@@ -28,6 +28,12 @@
             </intent-filter>
         </service>
 
+        <!-- ContentProvider для передачи настроек в хук через Binder (SELinux-совместимо) -->
+        <provider
+            android:name=".PrefsProvider"
+            android:authorities="com.example.notifhider.prefs"
+            android:exported="true"/>
+
         <meta-data
             android:name="xposedmodule"
             android:value="true"/>
