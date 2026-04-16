@@ -9,12 +9,12 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
-import com.google.android.material.materialswitch.MaterialSwitch;
-import com.google.android.material.textview.MaterialTextView;
+import com.google.android.material.switchmaterial.SwitchMaterial;
 
 import java.util.List;
 
@@ -47,7 +47,7 @@ public class NotificationAdapter extends RecyclerView.Adapter<NotificationAdapte
             Drawable icon = pm.getApplicationIcon(info);
             holder.ivIcon.setImageDrawable(icon);
         } catch (PackageManager.NameNotFoundException e) {
-            holder.ivIcon.setImageDrawable(null);
+            holder.ivIcon.setImageResource(android.R.drawable.sym_def_app_icon);
         }
 
         // Название приложения
@@ -60,7 +60,7 @@ public class NotificationAdapter extends RecyclerView.Adapter<NotificationAdapte
         }
         holder.tvAppName.setText(appName);
 
-        // Заголовок уведомления
+        // Заголовок/текст уведомления
         Notification n = sbn.getNotification();
         String title = n.extras.getString(Notification.EXTRA_TITLE, "");
         String text = n.extras.getString(Notification.EXTRA_TEXT, "");
@@ -81,9 +81,9 @@ public class NotificationAdapter extends RecyclerView.Adapter<NotificationAdapte
 
     static class ViewHolder extends RecyclerView.ViewHolder {
         ImageView ivIcon;
-        MaterialTextView tvAppName;
-        MaterialTextView tvTitle;
-        MaterialSwitch switchHide;
+        TextView tvAppName;
+        TextView tvTitle;
+        SwitchMaterial switchHide;
 
         ViewHolder(View v) {
             super(v);
