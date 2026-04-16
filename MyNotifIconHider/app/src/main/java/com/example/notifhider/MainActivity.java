@@ -13,9 +13,11 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
+import com.google.android.material.snackbar.Snackbar;
 
 import java.util.List;
 
+import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
 
 public class MainActivity extends AppCompatActivity {
@@ -24,6 +26,7 @@ public class MainActivity extends AppCompatActivity {
     private View layoutEmpty;
     private RecyclerView recycler;
     private FloatingActionButton fabRefresh;
+    private View rootView;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -31,6 +34,8 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
         MySettings.init(this);
+
+        rootView = findViewById(android.R.id.content);
 
         MaterialToolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
@@ -46,13 +51,28 @@ public class MainActivity extends AppCompatActivity {
         btnGrant.setOnClickListener(v ->
                 startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)));
 
-        fabRefresh.setOnClickListener(v -> refresh());
+        fabRefresh.setOnClickListener(v -> {
+            tryRebind();
+            refresh();
+        });
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        // Пробуем переподключить сервис при каждом открытии
+        tryRebind();
         refresh();
+    }
+
+    private void tryRebind() {
+        if (isNotificationAccessGranted() && !NotificationService.isConnected()) {
+            // Сервис имеет разрешение, но не подключён — просим Android перезапустить
+            try {
+                ComponentName cn = new ComponentName(this, NotificationService.class);
+                NotificationListenerService.requestRebind(cn);
+            } catch (Throwable ignored) {}
+        }
     }
 
     private void refresh() {
@@ -65,6 +85,14 @@ public class MainActivity extends AppCompatActivity {
 
         layoutNoAccess.setVisibility(View.GONE);
 
+        // Разрешение есть, но сервис ещё не подключился (бывает при смене компонента)
+        if (!NotificationService.isConnected()) {
+            showToggleHint();
+            layoutEmpty.setVisibility(View.VISIBLE);
+            recycler.setVisibility(View.GONE);
+            return;
+        }
+
         List<StatusBarNotification> list = NotificationService.fetchAll();
 
         if (list.isEmpty()) {
@@ -75,6 +103,15 @@ public class MainActivity extends AppCompatActivity {
             recycler.setVisibility(View.VISIBLE);
             recycler.setAdapter(new NotificationAdapter(list, getPackageManager()));
         }
+    }
+
+    private void showToggleHint() {
+        Snackbar.make(rootView,
+                "Сервис не подключён — выключи и снова включи разрешение в настройках",
+                Snackbar.LENGTH_LONG)
+                .setAction("Открыть", v ->
+                        startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)))
+                .show();
     }
 
     private boolean isNotificationAccessGranted() {
