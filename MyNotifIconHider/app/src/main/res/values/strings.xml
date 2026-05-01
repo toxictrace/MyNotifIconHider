@@ -10,4 +10,7 @@
     <string name="refresh">Обновить</string>
     <string name="hidden">Скрыто</string>
     <string name="visible">Видимо</string>
+    <string name="restart_systemui">Перезагрузить SystemUI</string>
+    <string name="restarting_systemui">Перезагрузка SystemUI…</string>
+    <string name="restart_no_root">Нет доступа root</string>
 </resources>
