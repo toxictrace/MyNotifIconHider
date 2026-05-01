@@ -25,7 +25,6 @@ public class MainActivity extends AppCompatActivity {
     private View layoutNoAccess;
     private View layoutEmpty;
     private RecyclerView recycler;
-    private FloatingActionButton fabRefresh;
     private View rootView;
 
     @Override
@@ -43,7 +42,6 @@ public class MainActivity extends AppCompatActivity {
         layoutNoAccess = findViewById(R.id.layout_no_access);
         layoutEmpty = findViewById(R.id.layout_empty);
         recycler = findViewById(R.id.recycler);
-        fabRefresh = findViewById(R.id.fab_refresh);
 
         recycler.setLayoutManager(new LinearLayoutManager(this));
 
@@ -51,9 +49,19 @@ public class MainActivity extends AppCompatActivity {
         btnGrant.setOnClickListener(v ->
                 startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)));
 
+        FloatingActionButton fabRefresh = findViewById(R.id.fab_refresh);
         fabRefresh.setOnClickListener(v -> {
             tryRebind();
             refresh();
+        });
+
+        // Обработчик меню тулбара
+        toolbar.setOnMenuItemClickListener(item -> {
+            if (item.getItemId() == R.id.action_restart_systemui) {
+                restartSystemUI();
+                return true;
+            }
+            return false;
         });
     }
 
@@ -103,6 +111,29 @@ public class MainActivity extends AppCompatActivity {
             recycler.setVisibility(View.VISIBLE);
             recycler.setAdapter(new NotificationAdapter(list, getPackageManager()));
         }
+    }
+
+    /**
+     * Перезагружает SystemUI через root.
+     * Android автоматически перезапускает SystemUI как постоянный сервис.
+     */
+    private void restartSystemUI() {
+        Snackbar.make(rootView, R.string.restarting_systemui, Snackbar.LENGTH_SHORT).show();
+        new Thread(() -> {
+            try {
+                Process su = Runtime.getRuntime().exec("su");
+                su.getOutputStream().write("pkill -f com.android.systemui\n".getBytes());
+                su.getOutputStream().flush();
+                su.getOutputStream().write("exit\n".getBytes());
+                su.getOutputStream().flush();
+                su.waitFor();
+            } catch (Throwable t) {
+                runOnUiThread(() ->
+                        Snackbar.make(rootView, R.string.restart_no_root,
+                                Snackbar.LENGTH_LONG).show()
+                );
+            }
+        }).start();
     }
 
     private void showToggleHint() {
