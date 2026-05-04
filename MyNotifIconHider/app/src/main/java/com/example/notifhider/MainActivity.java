@@ -37,7 +37,15 @@ public class MainActivity extends AppCompatActivity {
         rootView = findViewById(android.R.id.content);
 
         MaterialToolbar toolbar = findViewById(R.id.toolbar);
-        setSupportActionBar(toolbar);
+        // Не используем setSupportActionBar — инфлейтим меню напрямую
+        toolbar.inflateMenu(R.menu.menu_main);
+        toolbar.setOnMenuItemClickListener(item -> {
+            if (item.getItemId() == R.id.action_restart_systemui) {
+                restartSystemUI();
+                return true;
+            }
+            return false;
+        });
 
         layoutNoAccess = findViewById(R.id.layout_no_access);
         layoutEmpty = findViewById(R.id.layout_empty);
@@ -53,15 +61,6 @@ public class MainActivity extends AppCompatActivity {
         fabRefresh.setOnClickListener(v -> {
             tryRebind();
             refresh();
-        });
-
-        // Обработчик меню тулбара
-        toolbar.setOnMenuItemClickListener(item -> {
-            if (item.getItemId() == R.id.action_restart_systemui) {
-                restartSystemUI();
-                return true;
-            }
-            return false;
         });
     }
 
