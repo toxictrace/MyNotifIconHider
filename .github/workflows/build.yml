@@ -6,9 +6,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: MyNotifIconHider
 
     steps:
       - name: Checkout code
@@ -24,7 +21,10 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Build Release APK
-        run: ./gradlew assembleRelease
+        working-directory: MyNotifIconHider
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
