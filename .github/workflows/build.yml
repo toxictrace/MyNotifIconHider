@@ -1,10 +1,6 @@
-name: Build APK
+name: Build Release APK
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -27,17 +23,12 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.5'
+      - name: Build Release APK
+        run: ./gradlew assembleRelease
 
-      - name: Build Debug APK
-        run: gradle assembleDebug
-
-      - name: Upload Debug APK
+      - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
-          name: MyNotifIconHider-debug
-          path: MyNotifIconHider/app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 14
+          name: MyNotifIconHider-release
+          path: MyNotifIconHider/app/build/outputs/apk/release/app-release-unsigned.apk
+          retention-days: 30
