@@ -22,37 +22,49 @@ public class HookInit implements IXposedHookLoadPackage {
     private static final Uri PREFS_URI =
             Uri.parse("content://com.example.notifhider.prefs/blocked");
 
-    // Кэш заблокированных пакетов — читаем из ContentProvider раз в 3 секунды
     private static volatile Set<String> blockedCache = Collections.emptySet();
     private static volatile long lastRead = 0;
     private static volatile Context cachedCtx = null;
 
     private static Set<String> getBlocked() {
         long now = System.currentTimeMillis();
-        if (now - lastRead > 3000 && cachedCtx != null) {
-            lastRead = now;
-            blockedCache = readFromProvider(cachedCtx);
+        if (cachedCtx != null && now - lastRead > 1000) {
+            Set<String> fresh = readFromProvider(cachedCtx);
+            if (fresh != null) {
+                // null = провайдер недоступен → не обновляем lastRead, пробуем снова
+                blockedCache = fresh;
+                lastRead = now;
+            }
         }
         return blockedCache;
     }
 
+    /**
+     * Возвращает набор заблокированных пакетов.
+     * Возвращает null если ContentProvider недоступен (приложение ещё не запущено).
+     * Возвращает пустой Set если провайдер доступен, но список пуст.
+     */
     private static Set<String> readFromProvider(Context ctx) {
         Set<String> result = new HashSet<>();
         try {
             Cursor cursor = ctx.getContentResolver().query(
                     PREFS_URI, null, null, null, null);
-            if (cursor != null) {
-                try {
-                    while (cursor.moveToNext()) {
-                        result.add(cursor.getString(0));
-                    }
-                } finally {
-                    cursor.close();
+            if (cursor == null) {
+                // Провайдер ещё не поднялся — не кэшируем
+                XposedBridge.log("NotifIconHider: ContentProvider недоступен, повтор...");
+                return null;
+            }
+            try {
+                while (cursor.moveToNext()) {
+                    result.add(cursor.getString(0));
                 }
+            } finally {
+                cursor.close();
             }
             XposedBridge.log("NotifIconHider: заблокировано: " + result);
         } catch (Throwable t) {
             XposedBridge.log("NotifIconHider: ошибка ContentProvider: " + t);
+            return null; // не кэшируем при ошибке
         }
         return result;
     }
@@ -75,7 +87,7 @@ public class HookInit implements IXposedHookLoadPackage {
 
         final Class<?> finalIconViewClass = iconViewClass;
 
-        // === Хук 1: set(StatusBarIcon) — основной хук ===
+        // === Хук 1: set(StatusBarIcon) ===
         boolean hookedSet = false;
         for (Method m : iconViewClass.getDeclaredMethods()) {
             if (m.getName().equals("set") && m.getParameterCount() == 1
@@ -89,15 +101,9 @@ public class HookInit implements IXposedHookLoadPackage {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         View view = (View) param.thisObject;
-
-                        // Получаем контекст при первой возможности
                         if (cachedCtx == null) {
                             cachedCtx = view.getContext().getApplicationContext();
-                            // Сразу читаем заблокированные
-                            blockedCache = readFromProvider(cachedCtx);
-                            lastRead = System.currentTimeMillis();
                         }
-
                         Object icon = param.args[0];
                         if (icon == null) return;
                         String pkg = getPkg(icon);
