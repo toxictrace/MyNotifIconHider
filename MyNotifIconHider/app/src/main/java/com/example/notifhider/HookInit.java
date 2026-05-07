@@ -23,50 +23,65 @@ public class HookInit implements IXposedHookLoadPackage {
             Uri.parse("content://com.example.notifhider.prefs/blocked");
 
     private static volatile Set<String> blockedCache = Collections.emptySet();
-    private static volatile long lastRead = 0;
+    private static volatile long lastRead = 0; // 0 = ни разу не читали успешно
     private static volatile Context cachedCtx = null;
+
+    /**
+     * Читает ContentProvider.
+     * Возвращает null если провайдер ещё недоступен (приложение не запущено).
+     * Возвращает пустой Set если провайдер работает, но список пуст.
+     */
+    private static Set<String> readFromProvider(Context ctx) {
+        try {
+            Cursor cursor = ctx.getContentResolver().query(
+                    PREFS_URI, null, null, null, null);
+            if (cursor == null) {
+                XposedBridge.log("NotifIconHider: провайдер недоступен (cursor=null)");
+                return null;
+            }
+            Set<String> result = new HashSet<>();
+            try {
+                while (cursor.moveToNext()) result.add(cursor.getString(0));
+            } finally {
+                cursor.close();
+            }
+            XposedBridge.log("NotifIconHider: заблокировано: " + result);
+            return result;
+        } catch (Throwable t) {
+            XposedBridge.log("NotifIconHider: ошибка ContentProvider: " + t);
+            return null;
+        }
+    }
 
     private static Set<String> getBlocked() {
         long now = System.currentTimeMillis();
         if (cachedCtx != null && now - lastRead > 1000) {
             Set<String> fresh = readFromProvider(cachedCtx);
             if (fresh != null) {
-                // null = провайдер недоступен → не обновляем lastRead, пробуем снова
                 blockedCache = fresh;
-                lastRead = now;
+                lastRead = now; // обновляем только при успешном чтении
             }
+            // fresh == null → провайдер недоступен → lastRead остаётся → повтор при следующем вызове
         }
         return blockedCache;
     }
 
     /**
-     * Возвращает набор заблокированных пакетов.
-     * Возвращает null если ContentProvider недоступен (приложение ещё не запущено).
-     * Возвращает пустой Set если провайдер доступен, но список пуст.
+     * Если при первом вызове провайдер недоступен — планирует повторную попытку
+     * скрытия иконки через postDelayed с экспоненциальным откатом (1с, 2с, 4с … 32с).
      */
-    private static Set<String> readFromProvider(Context ctx) {
-        Set<String> result = new HashSet<>();
-        try {
-            Cursor cursor = ctx.getContentResolver().query(
-                    PREFS_URI, null, null, null, null);
-            if (cursor == null) {
-                // Провайдер ещё не поднялся — не кэшируем
-                XposedBridge.log("NotifIconHider: ContentProvider недоступен, повтор...");
-                return null;
+    private static void scheduleRetryHide(View view, String pkg, int delayMs) {
+        if (delayMs > 32000) return;
+        view.postDelayed(() -> {
+            Set<String> blocked = getBlocked();
+            if (blocked.contains(pkg)) {
+                XposedBridge.log("NotifIconHider: скрываем (retry) " + pkg);
+                view.setVisibility(View.GONE);
+            } else if (lastRead == 0) {
+                // Провайдер ещё не поднялся — пробуем снова
+                scheduleRetryHide(view, pkg, delayMs * 2);
             }
-            try {
-                while (cursor.moveToNext()) {
-                    result.add(cursor.getString(0));
-                }
-            } finally {
-                cursor.close();
-            }
-            XposedBridge.log("NotifIconHider: заблокировано: " + result);
-        } catch (Throwable t) {
-            XposedBridge.log("NotifIconHider: ошибка ContentProvider: " + t);
-            return null; // не кэшируем при ошибке
-        }
-        return result;
+        }, delayMs);
     }
 
     @Override
@@ -84,7 +99,6 @@ public class HookInit implements IXposedHookLoadPackage {
             XposedBridge.log("NotifIconHider: StatusBarIconView не найден: " + e);
             return;
         }
-
         final Class<?> finalIconViewClass = iconViewClass;
 
         // === Хук 1: set(StatusBarIcon) ===
@@ -94,37 +108,29 @@ public class HookInit implements IXposedHookLoadPackage {
                     && !m.getParameterTypes()[0].isPrimitive()) {
 
                 m.setAccessible(true);
-                XposedBridge.log("NotifIconHider: нашли set("
+                XposedBridge.log("NotifIconHider: хукаем set("
                         + m.getParameterTypes()[0].getName() + ")");
 
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
                     @Override
-                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        View view = (View) param.thisObject;
-                        if (cachedCtx == null) {
-                            cachedCtx = view.getContext().getApplicationContext();
-                        }
-                        Object icon = param.args[0];
-                        if (icon == null) return;
-                        String pkg = getPkg(icon);
-                        if (pkg != null) view.setTag(TAG_PKG, pkg);
-                        if (pkg != null && getBlocked().contains(pkg)) {
-                            XposedBridge.log("NotifIconHider: скрываем (before) " + pkg);
-                            view.setVisibility(View.GONE);
-                        }
-                    }
-
-                    @Override
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        View view = (View) param.thisObject;
+                        if (cachedCtx == null)
+                            cachedCtx = view.getContext().getApplicationContext();
+
                         Object icon = param.args[0];
                         if (icon == null) return;
                         String pkg = getPkg(icon);
                         if (pkg == null) return;
-                        View view = (View) param.thisObject;
                         view.setTag(TAG_PKG, pkg);
-                        if (getBlocked().contains(pkg)) {
-                            XposedBridge.log("NotifIconHider: скрываем (after) " + pkg);
+
+                        Set<String> blocked = getBlocked();
+                        if (blocked.contains(pkg)) {
+                            XposedBridge.log("NotifIconHider: скрываем " + pkg);
                             view.setVisibility(View.GONE);
+                        } else if (lastRead == 0) {
+                            // Провайдер ещё не готов — планируем повторную попытку
+                            scheduleRetryHide(view, pkg, 1000);
                         }
                     }
                 });
@@ -137,10 +143,10 @@ public class HookInit implements IXposedHookLoadPackage {
             return;
         }
 
-        // === Хук 2: setVisibility — ищем в иерархии родителей ===
+        // === Хук 2: setVisibility — блокируем VISIBLE для скрытых иконок ===
         Method setVisMeth = findInHierarchy(iconViewClass, "setVisibility", int.class);
         if (setVisMeth != null) {
-            XposedBridge.log("NotifIconHider: setVisibility в "
+            XposedBridge.log("NotifIconHider: hookSetVisibility в "
                     + setVisMeth.getDeclaringClass().getName());
             setVisMeth.setAccessible(true);
             XposedBridge.hookMethod(setVisMeth, new XC_MethodHook() {
@@ -152,17 +158,16 @@ public class HookInit implements IXposedHookLoadPackage {
                     String pkg = (String) view.getTag(TAG_PKG);
                     if (pkg == null) return;
                     if (getBlocked().contains(pkg)) {
-                        XposedBridge.log("NotifIconHider: блок setVisibility -> " + pkg);
-                        param.setResult(null);
+                        param.setResult(null); // не даём сделать VISIBLE
                     }
                 }
             });
         }
 
-        // === Хук 3: onAttachedToWindow — ищем в иерархии ===
+        // === Хук 3: onAttachedToWindow — скрываем при повторном добавлении в иерархию ===
         Method attachMeth = findInHierarchy(iconViewClass, "onAttachedToWindow");
         if (attachMeth != null) {
-            XposedBridge.log("NotifIconHider: onAttachedToWindow в "
+            XposedBridge.log("NotifIconHider: hookOnAttachedToWindow в "
                     + attachMeth.getDeclaringClass().getName());
             attachMeth.setAccessible(true);
             XposedBridge.hookMethod(attachMeth, new XC_MethodHook() {
@@ -170,14 +175,11 @@ public class HookInit implements IXposedHookLoadPackage {
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                     if (!finalIconViewClass.isInstance(param.thisObject)) return;
                     View view = (View) param.thisObject;
-                    if (cachedCtx == null) {
+                    if (cachedCtx == null)
                         cachedCtx = view.getContext().getApplicationContext();
-                    }
                     String pkg = (String) view.getTag(TAG_PKG);
                     if (pkg == null) return;
-                    if (getBlocked().contains(pkg)) {
-                        view.setVisibility(View.GONE);
-                    }
+                    if (getBlocked().contains(pkg)) view.setVisibility(View.GONE);
                 }
             });
         }
@@ -186,13 +188,9 @@ public class HookInit implements IXposedHookLoadPackage {
     }
 
     private static Method findInHierarchy(Class<?> cls, String name, Class<?>... params) {
-        Class<?> c = cls;
-        while (c != null) {
-            try {
-                return c.getDeclaredMethod(name, params);
-            } catch (NoSuchMethodException ignored) {
-                c = c.getSuperclass();
-            }
+        for (Class<?> c = cls; c != null; c = c.getSuperclass()) {
+            try { return c.getDeclaredMethod(name, params); }
+            catch (NoSuchMethodException ignored) {}
         }
         return null;
     }
